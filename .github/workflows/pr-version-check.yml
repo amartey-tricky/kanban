@@ -1,0 +1,97 @@
+name: PR Version Check
+
+on:
+  pull_request:
+    branches: [ main, master ]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check-version-impact:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Analyze PR for version impact
+      id: analyze
+      run: |
+        # Get PR title and description
+        PR_TITLE="${{ github.event.pull_request.title }}"
+        PR_BODY="${{ github.event.pull_request.body }}"
+        
+        # Get changed files
+        CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+        
+        echo "PR Title: $PR_TITLE"
+        echo "Changed files:"
+        echo "$CHANGED_FILES"
+        
+        # Analyze for version impact
+        SUGGESTED_VERSION="patch"
+        
+        # Check for major changes
+        if echo "$PR_TITLE $PR_BODY" | grep -iE "(BREAKING|breaking change|major|remove|delete)" > /dev/null; then
+          SUGGESTED_VERSION="major"
+        # Check for minor changes
+        elif echo "$PR_TITLE $PR_BODY" | grep -iE "(feat|feature|add|new|enhance)" > /dev/null; then
+          SUGGESTED_VERSION="minor"
+        fi
+        
+        # Check file changes for API changes
+        if echo "$CHANGED_FILES" | grep -E "(api/|src/api|routes/)" > /dev/null; then
+          if [ "$SUGGESTED_VERSION" == "patch" ]; then
+            SUGGESTED_VERSION="minor"
+          fi
+        fi
+        
+        echo "suggested_version=$SUGGESTED_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Comment on PR with version suggestion
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const suggestedVersion = '${{ steps.analyze.outputs.suggested_version }}';
+          
+          const versionEmoji = {
+            'major': '🚨',
+            'minor': '✨',
+            'patch': '🐛'
+          };
+          
+          const versionDescription = {
+            'major': 'Major version bump (breaking changes)',
+            'minor': 'Minor version bump (new features)',
+            'patch': 'Patch version bump (bug fixes)'
+          };
+          
+          const comment = `## ${versionEmoji[suggestedVersion]} Version Impact Analysis
+          
+          Based on the PR title, description, and changed files, this PR suggests a **${suggestedVersion}** version bump.
+          
+          **${versionDescription[suggestedVersion]}**
+          
+          ### When this PR is merged:
+          - The version will be automatically updated
+          - A new release will be created
+          - Git tag will be pushed
+          
+          ### Manual Override Available
+          If you disagree with this suggestion, you can manually trigger the version bump workflow with your preferred version type after merging.
+          
+          ---
+          *This analysis is automated and may not be 100% accurate. Please review before merging.*`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });

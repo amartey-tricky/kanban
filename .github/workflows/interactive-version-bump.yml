@@ -1,0 +1,126 @@
+name: Interactive Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      change_description:
+        description: 'Describe the changes made'
+        required: true
+        type: string
+      is_major_change:
+        description: 'Is this a major change? (breaking changes, new major features)'
+        required: true
+        type: boolean
+        default: false
+      is_minor_change:
+        description: 'Is this a minor change? (new features, enhancements)'
+        required: true
+        type: boolean
+        default: true
+      custom_version:
+        description: 'Custom version (optional, overrides automatic versioning)'
+        required: false
+        type: string
+
+jobs:
+  interactive-version-bump:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Get current version
+      id: current_version
+      run: |
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "Current version: $CURRENT_VERSION"
+
+    - name: Determine version type from inputs
+      id: version_type
+      run: |
+        if [ "${{ github.event.inputs.custom_version }}" != "" ]; then
+          echo "type=custom" >> $GITHUB_OUTPUT
+          echo "Using custom version: ${{ github.event.inputs.custom_version }}"
+        elif [ "${{ github.event.inputs.is_major_change }}" == "true" ]; then
+          echo "type=major" >> $GITHUB_OUTPUT
+          echo "Major change detected"
+        elif [ "${{ github.event.inputs.is_minor_change }}" == "true" ]; then
+          echo "type=minor" >> $GITHUB_OUTPUT
+          echo "Minor change detected"
+        else
+          echo "type=patch" >> $GITHUB_OUTPUT
+          echo "Patch change (default)"
+        fi
+
+    - name: Bump version
+      id: bump_version
+      run: |
+        if [ "${{ steps.version_type.outputs.type }}" == "custom" ]; then
+          # Set custom version
+          npm version ${{ github.event.inputs.custom_version }} --no-git-tag-version
+          NEW_VERSION="v${{ github.event.inputs.custom_version }}"
+        else
+          # Use npm version to bump
+          NEW_VERSION=$(npm version ${{ steps.version_type.outputs.type }} --no-git-tag-version)
+        fi
+        
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "Version updated to: $NEW_VERSION"
+
+    - name: Update package.json and commit
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add package.json
+        git commit -m "chore: bump version to ${{ steps.bump_version.outputs.new_version }}
+
+        ${{ github.event.inputs.change_description }}
+        
+        Version type: ${{ steps.version_type.outputs.type }}
+        Major change: ${{ github.event.inputs.is_major_change }}
+        Minor change: ${{ github.event.inputs.is_minor_change }}"
+
+    - name: Create and push tag
+      run: |
+        git tag ${{ steps.bump_version.outputs.new_version }}
+        git push origin HEAD:${{ github.ref_name }}
+        git push origin ${{ steps.bump_version.outputs.new_version }}
+
+    - name: Create detailed GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.bump_version.outputs.new_version }}
+        release_name: Release ${{ steps.bump_version.outputs.new_version }}
+        body: |
+          ## Release ${{ steps.bump_version.outputs.new_version }}
+          
+          **Previous Version:** ${{ steps.current_version.outputs.version }}
+          **Version Type:** ${{ steps.version_type.outputs.type }}
+          
+          ### Change Description
+          ${{ github.event.inputs.change_description }}
+          
+          ### Change Classification
+          - **Major Change:** ${{ github.event.inputs.is_major_change }}
+          - **Minor Change:** ${{ github.event.inputs.is_minor_change }}
+          
+          ---
+          *This release was created through the interactive version bump workflow.*
+        draft: false
+        prerelease: false
