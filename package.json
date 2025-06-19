@@ -1,5 +1,8 @@
 {
   "name": "project_management",
+  "description": "A project management app with a Kanban board using Next.js and Tailwind CSS",
+  "author": "Patrick Annang",
+  "license": "MIT",
   "version": "0.1.0",
   "private": true,
   "scripts": {
