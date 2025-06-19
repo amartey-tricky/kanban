@@ -1,0 +1,115 @@
+name: Package Validation
+
+on:
+  push:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+
+jobs:
+  validate-package:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Validate package.json structure
+      run: |
+        echo "Validating package.json..."
+        
+        # Check if package.json exists
+        if [ ! -f "package.json" ]; then
+          echo "❌ Error: package.json not found"
+          exit 1
+        fi
+        
+        # Validate JSON syntax
+        if ! node -e "JSON.parse(require('fs').readFileSync('package.json', 'utf8'))"; then
+          echo "❌ Error: Invalid JSON syntax in package.json"
+          exit 1
+        fi
+        
+        # Check required fields
+        REQUIRED_FIELDS=("name" "version" "description")
+        for field in "${REQUIRED_FIELDS[@]}"; do
+          if ! node -e "const pkg = require('./package.json'); if (!pkg.$field) process.exit(1)"; then
+            echo "❌ Error: Missing required field '$field' in package.json"
+            exit 1
+          fi
+        done
+        
+        echo "✅ package.json validation passed"
+
+    - name: Check version format
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        echo "Current version: $VERSION"
+        
+        # Validate semantic version format
+        if ! echo "$VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$'; then
+          echo "❌ Error: Version '$VERSION' is not a valid semantic version"
+          exit 1
+        fi
+        
+        echo "✅ Version format is valid"
+
+    - name: Install and audit dependencies
+      run: |
+        if [ -f "package-lock.json" ]; then
+          npm ci
+        else
+          npm install
+        fi
+        
+        # Run security audit
+        npm audit --audit-level=moderate
+
+    - name: Check for outdated dependencies
+      run: |
+        echo "Checking for outdated dependencies..."
+        npm outdated || true
+        
+        # Check for major version updates
+        OUTDATED=$(npm outdated --json 2>/dev/null || echo "{}")
+        if [ "$OUTDATED" != "{}" ]; then
+          echo "⚠️  Some dependencies are outdated. Consider updating them."
+        else
+          echo "✅ All dependencies are up to date"
+        fi
+
+    - name: Validate scripts
+      run: |
+        echo "Validating npm scripts..."
+        
+        # Check if essential scripts exist
+        SCRIPTS=("dev" "build" "start")
+        for script in "${SCRIPTS[@]}"; do
+          if ! node -e "const pkg = require('./package.json'); if (!pkg.scripts || !pkg.scripts.$script) process.exit(1)" 2>/dev/null; then
+            echo "⚠️  Warning: Missing recommended script '$script'"
+          else
+            echo "✅ Script '$script' found"
+          fi
+        done
+
+    - name: Generate package report
+      run: |
+        echo "## 📦 Package Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Package Name:** $(node -p "require('./package.json').name")" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** $(node -p "require('./package.json').version")" >> $GITHUB_STEP_SUMMARY
+        echo "**Description:** $(node -p "require('./package.json').description")" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Dependencies" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        npm list --depth=0 2>/dev/null || echo "No dependencies installed"
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
