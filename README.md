@@ -207,8 +207,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 👨‍💻 Author
 
 **Patrick Annang**
-- GitHub: [@your-github-username](https://github.com/your-github-username)
-- Email: your.email@example.com
+- GitHub: [@amartey-tricky](https://github.com/amartey-tricky)
+- Email: trickya23@outlook.com
 
 ## 🙏 Acknowledgments
 
